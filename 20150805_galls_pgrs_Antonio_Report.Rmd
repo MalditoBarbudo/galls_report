@@ -1,0 +1,706 @@
+---
+title: "20150805_galls_pgrs_Antonio_Report"
+author: "Víctor Granda"
+date: "6 de agosto de 2015"
+output: 
+  html_document: 
+    theme: readable
+    toc: yes
+runtime: shiny
+---
+
+# Carga de datos
+
+En primer lugar cargamos los datos y las librerías necesarias para realizar el
+análisis.
+
+```{r data_load, message=FALSE}
+#### Cargamos las librerías necesarias
+library(magrittr) # para los pipes
+library(dplyr) # para las modificaciones de datos
+library(tidyr) # para las modificaciones de datos
+library(ggplot2) # para las gráficas
+library(readr) # para la carga de datos
+library(pixiedust) # para mostrar las tablas de datos
+library(DT) # para mostrar las tablas de datos
+library(d3heatmap) # heatmap
+library(viridis) # colores para daltónicos
+library(extrafont) # fuentes extras para las gráficas
+# Load fonts
+loadfonts()
+
+
+#### Cargamos los datos
+
+data_pgrs <- read_csv2('Data/pgrs_foliolos_vs_agallas.csv')
+
+data_dictionary <- read_csv2('Data/data_dictionary.csv')
+
+```
+
+```{r load_shiny_funtions, echo = FALSE}
+# Cargar las funciones necesarias para las miniaplicaciones shiny
+source('Scripts/shiny_functions_galls.R')
+```
+
+## Transformaciones de los datos para el análisis
+
+### *Long* a *Wide*
+
+En este caso, para facilitar el análisis lo primero que vamos a hacer es
+pasar los datos del formato *long* al formato *wide*. Esto quiere decir que
+en vez de tener una sola variable (cantidad o concentración) vamos a tener
+una variable para cada hormona.
+
+```{r data_wrangling}
+# Datos de cantidad
+data_pgrs_cantidad <- data_pgrs %>%
+  select(-Concentración) %>%
+  spread(Compuesto, Cantidad)
+
+# Datos de concentración
+data_pgrs_conc <- data_pgrs %>%
+  select(-Cantidad) %>%
+  spread(Compuesto, Concentración)
+```
+
+### Eliminar pseudoréplicas
+
+Las réplicas analíticas debemos colapsarlas a medias, ya que si no lo hiciesemos
+nuestro *n* sería 15 (5 * 3), y serían pseudoréplicas.
+
+```{r remove_pseudoreplicates}
+# cantidad
+data_pgrs_cantidad %<>%
+  group_by(ID) %>%
+  summarise_each(funs(mean(., na.rm = TRUE))) %>%
+  select(-RA) # elimino la columna de réplica analítica, ya no es necesaria
+
+# concentración
+data_pgrs_conc %<>%
+  group_by(ID) %>%
+  summarise_each(funs(mean(., na.rm = TRUE))) %>%
+  select(-RA) # elimino la columna de réplica analítica, ya no es necesaria
+```
+
+### Añadir árbol
+
+Necesitamos saber de que árbol es cada muestra, ya que para el análisis es
+necesario tener en cuenta el árbol de procedencia. Esto se debe a que los
+niveles hormonales en la agalla no son independientes de los niveles
+hormonales en el hemifoliolo no afectado, pues proceden del mismo individuo.
+
+```{r create_tree_variable}
+# cantidad
+data_pgrs_cantidad %<>%
+  separate(ID, c('ID', 'árbol'), sep = '-')
+
+# concentración
+data_pgrs_conc %<>%
+  separate(ID, c('ID', 'árbol'), sep = '-')
+```
+
+### Eliminar reguladores
+
+Desgraciadamente, en la Giberelina 3 (`GA3`), para los datos de agallas
+tenemos dos individuos, mientras que para los testigos solo uno. No sería muy
+útil analizar esta hormona, y en el caso de hacer análisis multivariantes nos
+podría afectar negativamente alterando los resultados. Así que tenemos que
+eliminar este regulador.
+
+```{r remove_regulators}
+# cantidad
+data_pgrs_cantidad %<>%
+  select(-GA3)
+
+# concentración
+data_pgrs_conc %<>%
+  select(-GA3)
+```
+
+## Datos limpios
+
+Finalmente, tras todo este proceso obtenemos los datos "*limpios*".
+Comprobamos que estén bien, primero los datos de cantidad:
+
+```{r datatables_comprobation_quantity, echo = FALSE}
+# cantidad
+
+dust(data_pgrs_cantidad) %>%
+  sprinkle(cols = c(1:4,6:14), round = 3) %>%
+  sprinkle(cols = 5, round = 1) %>%
+  sprinkle(rows = 1:5, bg_pattern = c('#F22613', '#E74C3C')) %>%
+  sprinkle(rows = 6:10, bg_pattern = c('#4183D7', '#59ABE3')) %>%
+  sprinkle(rows = 1:10, cols = 1:14,
+           halign = 'center', valign = 'middle',
+           width = 65, bold = TRUE) %>%
+  sprinkle_print_method('html')
+```
+
+Y luego los datos de concentración:
+
+```{r datatables_comprobation_concentration, echo = FALSE}
+# concentración
+
+dust(data_pgrs_conc) %>%
+  sprinkle(cols = c(1:4,6:14), round = 3) %>%
+  sprinkle(cols = 5, round = 1) %>%
+  sprinkle(rows = 1:5, bg_pattern = c('#F22613', '#E74C3C')) %>%
+  sprinkle(rows = 6:10, bg_pattern = c('#4183D7', '#59ABE3')) %>%
+  sprinkle(rows = 1:10, cols = 1:14,
+           halign = 'center', valign = 'middle',
+           width = 65, bold = TRUE) %>%
+  sprinkle_print_method('html')
+```
+
+# Estadística descriptiva
+
+Vamos a ver un poco la estructura de los datos y los primeros resultados
+preliminares, mediante análisis y gráficas descriptivas.
+
+## Gráficas de cajas (*boxplots*)
+
+Vamos a ver la distribución de cada uno de los estados (agalla y testigo) para
+cada hormona, para visualizar las posibles diferencias:
+
+```{r boxplots, fig.height = 8, fig.width = 10, warning = FALSE, echo = FALSE}
+# cantidad
+data_pgrs_cantidad %>%
+  gather(Regulador, Cantidad, ABA:Z) %>%
+  ggplot(aes(x = ID, y = Cantidad, fill = ID)) +
+  geom_boxplot(outlier.size = 0) +
+  geom_point(aes(colour = ID),
+             position = position_jitter(width = .25, height = 0),
+             shape = 19, size = 2) +
+  facet_wrap(~ Regulador, scales = 'free_y') +
+  labs(x = '', y = 'Cantidad (ng/g Pf)') +
+  scale_fill_manual(values = c('#EF4836', '#446CB3')) +
+  scale_colour_manual(values = c('#96281B', '#1F3A93')) +
+  theme_bw() +
+  theme(axis.ticks.x = element_line(size = 1, colour = 'black'),
+        axis.line = element_line(size = 1, colour = "black"),
+        axis.line.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        panel.border = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.grid.major.y = element_line(size = .5, colour = 'grey80', linetype = 'dotted'),
+        panel.grid.major.x = element_blank(),
+        panel.background = element_rect(fill = 'grey95'),
+        legend.background = element_blank(),
+        legend.key = element_blank(),
+        text = element_text(family = "Raleway", size = 12))
+
+# concentración
+data_pgrs_conc %>%
+  gather(Regulador, Concentración, ABA:Z) %>%
+  ggplot(aes(x = ID, y = Concentración, fill = ID)) +
+  geom_boxplot(outlier.size = 0) +
+  geom_point(aes(colour = ID),
+             position = position_jitter(width = .25, height = 0),
+             shape = 19, size = 2) +
+  facet_wrap(~ Regulador, scales = 'free_y') +
+  labs(x = '', y = 'Concentración (ng/mL)') +
+  scale_fill_manual(values = c('#EF4836', '#446CB3')) +
+  scale_colour_manual(values = c('#96281B', '#1F3A93')) +
+  theme_bw() +
+  theme(axis.ticks.x = element_line(size = 1, colour = 'black'),
+        axis.line = element_line(size = 1, colour = "black"),
+        axis.line.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        panel.border = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.grid.major.y = element_line(size = .5, colour = 'grey80', linetype = 'dotted'),
+        panel.grid.major.x = element_blank(),
+        panel.background = element_rect(fill = 'grey95'),
+        legend.background = element_blank(),
+        legend.key = element_blank(),
+        text = element_text(family = "Raleway", size = 12))
+```
+
+La verdad es que tiene buena pinta. A simple vista tenemos dos grupos de
+reguladores:
+
+  1. `ABA`, `BA`, `BK`, `GA9`, `JA`, `RDHZ`, `SA` y `Z`, que disminuyen su
+     contenido en agallas en comparación con los testigos.
+  
+  2. `DHZ`, `IAA`, `IP` e `IPA`, que aumentan su contenido en agallas en
+     comparación con los testigos.
+
+### Visualización de outliers
+
+Vamos a intentar identificar los puntos correspondientes a cada árbol, para
+comprobar que los outliers visualizados en las gráficas de cajas corresponden
+al mismo árbol en todas las hormonas o si en cada una es uno diferente. Esto
+es importante, porque si es el mismo árbol deberíamos eliminarlo, ya que nos
+alteraría los análisis. Para ello, simplemente repito la gráfica anterior, pero
+en este caso numero los puntos por el número de arbol al que pertenecen:
+
+```{r outliers_boxplot, echo = FALSE, warning = FALSE, fig.height = 8, fig.width = 10}
+data_pgrs_cantidad %>%
+  gather(Regulador, Cantidad, ABA:Z) %>%
+  ggplot(aes(x = ID, y = Cantidad, fill = ID)) +
+  geom_boxplot(outlier.size = 0) +
+  geom_point(aes(colour = ID),
+             position = position_jitter(width = .25, height = 0),
+             shape = 19, size = 2) +
+  facet_wrap(~ Regulador, scales = 'free_y') +
+  labs(x = '', y = 'Cantidad (ng/g Pf)') +
+  scale_fill_manual(values = c('#EF4836', '#446CB3')) +
+  scale_colour_manual(values = c('#96281B', '#1F3A93')) +
+  geom_text(aes(label = árbol)) +
+  theme_bw() +
+  theme(axis.ticks.x = element_line(size = 1, colour = 'black'),
+        axis.line = element_line(size = 1, colour = "black"),
+        axis.line.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        panel.border = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.grid.major.y = element_line(size = .5, colour = 'grey80', linetype = 'dotted'),
+        panel.grid.major.x = element_blank(),
+        panel.background = element_rect(fill = 'grey95'),
+        legend.background = element_blank(),
+        legend.key = element_blank(),
+        text = element_text(family = "Raleway", size = 12))
+
+data_pgrs_conc %>%
+  gather(Regulador, Concentracion, ABA:Z) %>%
+  ggplot(aes(x = ID, y = Concentracion, fill = ID)) +
+  geom_boxplot(outlier.size = 0) +
+  geom_point(aes(colour = ID),
+             position = position_jitter(width = .25, height = 0),
+             shape = 19, size = 2) +
+  facet_wrap(~ Regulador, scales = 'free_y') +
+  labs(x = '', y = 'Concentración (ng/mL)') +
+  scale_fill_manual(values = c('#EF4836', '#446CB3')) +
+  scale_colour_manual(values = c('#96281B', '#1F3A93')) +
+  geom_text(aes(label = árbol)) +
+  theme_bw() +
+  theme(axis.ticks.x = element_line(size = 1, colour = 'black'),
+        axis.line = element_line(size = 1, colour = "black"),
+        axis.line.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        panel.border = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.grid.major.y = element_line(size = .5, colour = 'grey80', linetype = 'dotted'),
+        panel.grid.major.x = element_blank(),
+        panel.background = element_rect(fill = 'grey95'),
+        legend.background = element_blank(),
+        legend.key = element_blank(),
+        text = element_text(family = "Raleway", size = 12))
+
+```
+
+Al parecer, en las muestras procedentes de agallas, el árbol 3 presenta valores
+muy extremos para la mayoría de las hormonas (8 de 12). En las muestras testigo
+no podemos identificar ningún outlier consistente (el árbol 1 apuntaría maneras,
+pero no es suficiente a mi entender).  
+El problema del árbol 3 es que al eliminarlo de las agallas, hay que eliminarlo
+de los testigos para poder hacer los análisis siguientes, lo que implica reducir
+el *n* de 5 a 4. Otra opción es eliminarlo solamente de las agallas y hacer un
+modelo generalizado, lo que complicaría un poco más la interpretación de los
+resultados. De momento voy a optar a eliminarlo totalmente, y posteriormente
+haremos pruebas con modelos más complicados. Así pues, elimino el árbol 3 de
+todos los datos, y como extra elimino el árbol 5 de los testigos en la `GA9` ya
+que si no en este caso tampoco podríamos hacer los tests.
+
+```{r outliers_remove}
+data_pgrs_conc_or <- data_pgrs_conc %>%
+  filter(árbol != '3')
+data_pgrs_conc_or[4,7] <- NaN
+
+data_pgrs_cantidad_or <- data_pgrs_cantidad %>%
+  filter(árbol != '3')
+data_pgrs_cantidad_or[4,7] <- NaN
+```
+
+Una vez eliminados los outliers, rehago los diagramas de cajas para ver como
+quedan:
+
+```{r boxplots_or, fig.height = 8, fig.width = 10, warning = FALSE, echo = FALSE}
+data_pgrs_cantidad_or %>%
+  gather(Regulador, Cantidad, ABA:Z) %>%
+  ggplot(aes(x = ID, y = Cantidad, fill = ID)) +
+  geom_boxplot(outlier.size = 0) +
+  geom_point(aes(colour = ID),
+             position = position_jitter(width = .25, height = 0),
+             shape = 19, size = 2) +
+  facet_wrap(~ Regulador, scales = 'free_y') +
+  labs(x = '', y = 'Cantidad (ng/g Pf)') +
+  scale_fill_manual(values = c('#EF4836', '#446CB3')) +
+  scale_colour_manual(values = c('#96281B', '#1F3A93')) +
+  theme_bw() +
+  theme(axis.ticks.x = element_line(size = 1, colour = 'black'),
+        axis.line = element_line(size = 1, colour = "black"),
+        axis.line.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        panel.border = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.grid.major.y = element_line(size = .5, colour = 'grey80', linetype = 'dotted'),
+        panel.grid.major.x = element_blank(),
+        panel.background = element_rect(fill = 'grey95'),
+        legend.background = element_blank(),
+        legend.key = element_blank(),
+        text = element_text(family = "Raleway", size = 12))
+
+# concentración
+data_pgrs_conc_or %>%
+  gather(Regulador, Concentración, ABA:Z) %>%
+  ggplot(aes(x = ID, y = Concentración, fill = ID)) +
+  geom_boxplot(outlier.size = 0) +
+  geom_point(aes(colour = ID),
+             position = position_jitter(width = .25, height = 0),
+             shape = 19, size = 2) +
+  facet_wrap(~ Regulador, scales = 'free_y') +
+  labs(x = '', y = 'Concentración (ng/mL)') +
+  scale_fill_manual(values = c('#EF4836', '#446CB3')) +
+  scale_colour_manual(values = c('#96281B', '#1F3A93')) +
+  theme_bw() +
+  theme(axis.ticks.x = element_line(size = 1, colour = 'black'),
+        axis.line = element_line(size = 1, colour = "black"),
+        axis.line.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        panel.border = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.grid.major.y = element_line(size = .5, colour = 'grey80', linetype = 'dotted'),
+        panel.grid.major.x = element_blank(),
+        panel.background = element_rect(fill = 'grey95'),
+        legend.background = element_blank(),
+        legend.key = element_blank(),
+        text = element_text(family = "Raleway", size = 12))
+```
+
+Con los datos limpios de outliers tenemos tres grupos:
+
+  1. `ABA`, `BK`, `JA`, `SA` y `Z`, que disminuyen su
+     contenido en agallas en comparación con los testigos.
+  
+  2. `DHZ`, `IAA`, `IP` e `IPA`, que aumentan su contenido en agallas en
+     comparación con los testigos.
+  
+  3. `BA`, `GA9` y `RDHZ`, que no parecen modificar su contenido o concentración
+     en agallas y testigos.
+
+## *Paired t test*
+
+Como cada par de muestras, `agalla` y `testigo`, proceden del mismo árbol, las
+muestras de cada grupo **no** son independientes. Esto supondría un problema si
+comparásemos las medias de cada grupo sin tenerlo en cuenta. La solución más
+sencilla es realizar un contraste de medias mediante un *t test*, pero
+considerando cada par de muestras `agalla` y `testigo` del mismo árbol como
+emparejadas.  
+Con el fin de simplificar el informe, así como facilitar la visualización de
+cada test, creo un framework interactivo, donde se puede seleccionar la
+hormona a analizar y el resultado a visualizar (cantidad o concentración):
+
+```{r paired_t_test, echo = FALSE}
+# salvamos los datos para cargarlos dentro de la funcion de shiny
+save(list = c('data_pgrs_conc_or', 'data_pgrs_cantidad_or'),
+     file = 't_test_data.Rdata')
+
+galls_paired_t_test()
+```
+
+Los resultados de los tests se resumen en la siguiente tabla:
+
+```{r t_test_results_table, echo = FALSE}
+results_t_test <- data_frame(
+  Regulador = names(data_pgrs_conc_or[3:14]),
+  Significativo_Cantidad = c('No', 'No', 'Sí', 'No', 'No', 'No',
+                             'Sí', 'Sí', 'No', 'No', 'Sí', 'No'),
+  Significativo_Concentracion = c('No', 'No', 'Sí', 'No', 'No', 'Sí',
+                                  'Sí', 'Sí', 'No', 'No', 'Sí', 'No')
+)
+# 
+# dust(results_t_test) +
+#   sprinkle(rows = c(1:2, 4:5, 9:10, 12), bg = 'grey') +
+#   sprinkle(rows = c(3, 7, 8, 11), bg = 'yellow') +
+#   sprinkle(rows = 6, bg = 'orange') +
+#   sprinkle(rows = 1:12, cols = 1:3,
+#            halign = 'center', valign = 'middle', bold = TRUE) +
+#   sprinkle_print_method('html')
+
+datatable(results_t_test,
+          style = 'bootstrap', rownames = FALSE,
+          options = list(
+            columnDefs = list(list(className = 'dt-center', targets = 0:2)),
+            dom = 't',
+            initComplete = JS(
+              "function(settings, json) {",
+              "$(this.api().table().header()).css({'background-color': '#000', 'color': '#fff'});",
+              "}"),
+            pageLength = 12))
+```
+
+Como podemos observar, exiten diferencias significativas para 4 o 5 hormonas,
+según miremos cantidad o concentración. Visto esto, a partir de aquí voy a
+trabajar con los datos de concentración, ya que nos incluye el `IAA` entre las
+hormonas significativamente alteradas en el proceso.  
+
+En cuanto a las hormonas significativas, observamos dos grupos:
+
+  + `BK` y `SA`, que disminuyen su contenido en la agalla en comparación con el
+     testigo.
+  
+  + `IAA`, `IP` e `IPA`, que aumentan su contenido en la agalla en comparación
+     con el testigo.
+
+Estas parecen las hormonas más importantes de las estudiadas en el proceso de
+formación o establecimiento de la agalla. Aún así vamos a hacer un análisis
+de clúster, para comprobar que esto es así, y además ver como el resto de
+reguladores se agrupan, ya que aunque no den diferencias significativas, su
+acción en conjunto también puede ser determinante.
+
+## *Cluster analysis*
+
+```{r heatmap_data_prep, echo = FALSE}
+# datos para el heatmap, sin los factores
+data_pgrs_conc_or_heatmap <- data_pgrs_conc_or %>%
+  select(ABA:Z)
+
+# rownames para el data frame
+rownames(data_pgrs_conc_or_heatmap) <- c('Ff-1', 'Ff-2', 'Ff-4', 'Ff-5',
+                                         'T1-1', 'T1-2', 'T1-4', 'T1-5')
+
+# funciones custom para el método de cluster
+custom_clust_average <- function(x){
+  hclust(x, method = 'average')
+}
+
+custom_clust_ward <- function(x){
+  hclust(x, method = 'ward.D2')
+}
+```
+
+```{r heatmap_view}
+d3heatmap(data_pgrs_conc_or_heatmap, scale = 'column', na.rm = TRUE,
+          k_row = 2, k_col = 4, hclustfun = custom_clust_ward,
+          colors = viridis(50),
+          width = 500, height = 400)
+```
+
+Como vemos, separamos bien entre agallas y testigos, pero en cuanto a las
+hormonas no vemos bien sus asociaciones debido al efecto de separación tan
+grande de la BK. Repetimos sin BK para intentar observar algo más:
+
+```{r heatmap_view_wo_BK}
+data_pgrs_conc_or_heatmap %>%
+  select(-BK) %>%
+  d3heatmap(scale = 'column', na.rm = TRUE,
+            k_row = 3, k_col = 2, hclustfun = custom_clust_ward,
+            colors = viridis(50),
+            width = 500, height = 400)
+```
+
+En este caso reordena los individuos, sacándonos fuera el testigo del árbol 1
+(ya vimos antes que tenía pinta de ser un outlier, pero no podemos hacer nada).  
+Lo que podemos observar es que la IPA se separa de la IP y el IAA, lo que parece
+indicar un comportamiento diferencial de los ribósidos de citoquininas.
+Por otro lado el ABA y el SA, dos hormonas que dismininuyen su contenido en la
+agalla, agrupan juntas, lo que indica también un comportamiento diferencial
+de las hormonas ácidas (si no tenemos en cuenta el comportamiento de la GA9.
+De momento, con el análsis de clúster no parece que podamos sacar muchas más
+conclusiones.
+
+### Datos normalizados
+
+Otra forma de evitar el efecto tan grande ejercido por el `BK` es normalizar
+los datos previamente al análisis de clúster:
+
+```{r heatmap_normalized}
+data_pgrs_conc_or_heatmap %>%
+  mutate_each(funs((. - mean(., na.rm = TRUE))/sd(., na.rm = TRUE))) %>%
+  d3heatmap(scale = 'column', na.rm = TRUE,
+            k_row = 2, k_col = 3, hclustfun = custom_clust_ward,
+            colors = viridis(50), labRow = rownames(data_pgrs_conc_or_heatmap),
+            width = 500, height = 400)
+```
+
+En este caso los resultados son más claros y podemos ver las asociaciones
+hormonales mucho más cláramente:
+
+  + Clúster con `IP`, `IPA`, `IAA` y `DHZ` que aumentan su contenido en las
+    agallas
+  
+  + Clúster con `SA`, `BK`, `GA9`, `IP` y `ABA`, que reducen su contenido en
+    las agallas
+  
+  + Clúster con `JA`, `BA`, `Z` y `RDHZ`, que se comportan más caóticamente.
+
+Además seguimos observando el comportamiento caótico del árbol 1, aunque poco
+podemos hacer en este caso.
+
+## *Stacked plots*
+
+Vamos a ver si porcentualmente hay diferencias visuales mediante gráficas
+apiladas. En este caso considero la suma de todas
+las concentraciones de los reguladores como el 100 % y represento el
+porcentaje de cada hormona en los dos casos, agallas y testigos:
+
+```{r stacked_plots, echo = FALSE, fig.height = 5, fig.width = 5}
+data_pgrs_conc_or %>%
+  mutate(Sum = rowSums(.[,3:14], na.rm = TRUE)) %>%
+  group_by(ID) %>%
+  select(-árbol) %>%
+  summarise_each(funs(mean = mean(., na.rm = TRUE))) %>%
+  group_by(ID) %>%
+  mutate_each(funs(perc = (. * 100)/Sum_mean)) %>%
+  gather(Hormona, Porcentaje, ABA_mean_perc:Z_mean_perc) %>%
+  ggplot(aes(x = ID, y = Porcentaje, fill = Hormona)) +
+  geom_bar(stat = 'identity') +
+  scale_fill_manual(values = c('#F22613', '#6BB9F0', '#6C7A89', '#3A539B',
+                               '#F89406', '#F7CA18', '#26A65B', '#87D37C',
+                               '#96281B', '#F62459', '#D64541', '#663399')) +
+  labs(x = 'Muestra', y = 'Porcentaje relativo a los reguladores totales') +
+  theme_bw() +
+  theme(axis.ticks.x = element_line(size = 1, colour = 'black'),
+        axis.line = element_line(size = 1, colour = "black"),
+        axis.line.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        panel.border = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.grid.major.y = element_line(size = .5, colour = 'grey80',
+                                          linetype = 'dotted'),
+        panel.grid.major.x = element_blank(),
+        panel.background = element_rect(fill = 'grey95'),
+        legend.background = element_blank(),
+        legend.key = element_blank(),
+        text = element_text(family = "Raleway", size = 12))
+```
+
+Como vemos, la concentración de `BK`, al ser tan grande nos enmascara el
+resto. Así pues vamos a repetir pero sin `BK`, para observar las variaciones
+en el resto de hormonas.
+
+```{r stacked_plots_wo_BK, echo = FALSE, fig.height = 5, fig.width = 5}
+data_pgrs_conc_or %>%
+  select(-BK) %>%
+  mutate(Sum = rowSums(.[,3:13], na.rm = TRUE)) %>%
+  group_by(ID) %>%
+  select(-árbol) %>%
+  summarise_each(funs(mean = mean(., na.rm = TRUE))) %>%
+  group_by(ID) %>%
+  mutate_each(funs(perc = (. * 100)/Sum_mean)) %>%
+  gather(Hormona, Porcentaje, ABA_mean_perc:Z_mean_perc) %>%
+  ggplot(aes(x = ID, y = Porcentaje, fill = Hormona)) +
+  geom_bar(stat = 'identity') +
+  scale_fill_manual(values = c('#F22613', '#6BB9F0', '#3A539B',
+                               '#F89406', '#F7CA18', '#26A65B', '#87D37C',
+                               '#96281B', '#F62459', '#D64541', '#663399')) +
+  labs(x = 'Muestra', y = 'Porcentaje relativo a los reguladores totales') +
+  theme_bw() +
+  theme(axis.ticks.x = element_line(size = 1, colour = 'black'),
+        axis.line = element_line(size = 1, colour = "black"),
+        axis.line.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        panel.border = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.grid.major.y = element_line(size = .5, colour = 'grey80',
+                                          linetype = 'dotted'),
+        panel.grid.major.x = element_blank(),
+        panel.background = element_rect(fill = 'grey95'),
+        legend.background = element_blank(),
+        legend.key = element_blank(),
+        text = element_text(family = "Raleway", size = 12))
+```
+
+Aquí observamos lo visto anteriormente para `IAA`, `IP` e `IPA`, pero además
+observamos que pese a que el `ABA` no nos daba diferencias significativas,
+porcentualmente disminuye su concentración en las agallas. También observamos
+que son los ribósidos de CKs los que mayoritariamente incrementan
+porcentualmente su concentración.
+
+## Ratios hormonales
+
+Puede ser interesante, más que los valores individuales de cada hormona, los
+ratios entre diferentes grupos hormonales. Los ratios más importantes suelen ser
+entre auxinas y citoquininas por un lado y entre inhibidores (`ABA`, `JA`, `SA`)
+y citoquininas por otro.  
+Vamos a crear los ratios y ver los resultados:
+
+```{r pgrs_ratios, fig.height=8}
+# creamos los ratios
+data_pgrs_conc_ratios <- data_pgrs_conc_or %>%
+  mutate(IAA_IP = IAA / IP,
+         IAA_IPA = IAA / IPA,
+         IAA_DHZ = IAA / DHZ,
+         IAA_RDHZ = IAA / RDHZ,
+         IAA_Z = IAA / Z,
+         IAA_BA = IAA / BA,
+         IAA_CKb = IAA / (IP + DHZ + Z),
+         IAA_CKr = IAA / (IPA + RDHZ),
+         Inhib_IP = (ABA + JA + SA) / IP,
+         Inhib_IPA = (ABA + JA + SA) / IPA,
+         Inhib_DHZ = (ABA + JA + SA) / DHZ,
+         Inhib_RDHZ = (ABA + JA + SA) / RDHZ,
+         Inhib_Z = (ABA + JA + SA) / Z,
+         Inhib_BA = (ABA + JA + SA) / BA,
+         Inhib_CKb = (ABA + JA + SA) / (IP + DHZ + Z),
+         Inhib_CKr = (ABA + JA + SA) / (IPA + RDHZ)) %>%
+  select(ID, árbol, IAA_IP:Inhib_CKr)
+
+# vemos la gráfica
+data_pgrs_conc_ratios %>%
+  gather(Regulador, Ratio, IAA_IP:Inhib_CKr) %>%
+  ggplot(aes(x = ID, y = Ratio, fill = ID)) +
+  geom_boxplot(outlier.size = 0) +
+  geom_point(aes(colour = ID),
+             position = position_jitter(width = .25, height = 0),
+             shape = 19, size = 2) +
+  geom_hline(yintercept = 1, size = 1, linetype = 'dotted',
+             colour = 'grey60') +
+  facet_wrap(~ Regulador) +
+  labs(x = '', y = 'Ratio (logaritmic scale)') +
+  scale_fill_manual(values = c('#EF4836', '#446CB3')) +
+  scale_colour_manual(values = c('#96281B', '#1F3A93')) +
+  scale_y_log10(limits = c(0.1, 2000)) +
+  theme_bw() +
+  theme(axis.ticks.x = element_line(size = 1, colour = 'black'),
+        axis.line = element_line(size = 1, colour = "black"),
+        axis.line.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        panel.border = element_blank(),
+        panel.grid.minor.y = element_line(size = .5, colour = 'grey80', linetype = 'dotted'),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_line(size = .5, colour = 'grey80', linetype = 'dotted'),
+        panel.grid.major.x = element_blank(),
+        panel.background = element_rect(fill = 'grey95'),
+        legend.background = element_blank(),
+        legend.key = element_blank(),
+        text = element_text(family = "Raleway", size = 12))
+```
+
+En los ratios vemos también cosas interesantes:
+
+  1. En los ratios de `IAA` con `IP` e `IPA` se invierte la proporción. En los
+     testigos la concentración de auxinas es mayor que estas CKs mientras que
+     en las agallas el ratio se invierte y las CKs presentan mayor concentración
+     que la auxina. Esto mismo ocurre cuando consideramos el `IAA` frente las
+     bases libres de CKs (`CKb`).
+  
+  2. En otras CKs (`DHZ`, `Z` y `BA`) el efecto es el contrario, aumentando el
+     ratio en agallas, pero siempre siendo la auxina la hormona dominante.
+  
+  3. En el `RDHZ` también aumenta el ratio en agallas, pero en este caso la
+     concentración de la auxina es menor que la de la CK.
+  
+  4. En cuanto a la suma de inhibidores (`ABA` + `JA` + `SA`), en todos los
+     casos los ratios disminuyen en agallas (el contenido en inhibidores
+     disminuye en comparación con las CKs), siendo esta diferencia de de hasta
+     casi 100 veces como es el caso de la `IP`, la `IPA` y `CKb` (bases libres
+     de CKs en conjunto).
+
+# Conclusiones preliminares
+
+De momento esto es lo que se me ocurre para analizar con los datos disponibles.
+A mi me parece que puede tener entidad como para publicarlo solo (aunque quizás
+en revista de menor impacto), ya que los resultados dan juego a una buena
+discusión, además de que no hay muchos estudios como éste.
+
+# Información de la sesión de R
+
+El entorno de trabajo y los paquetes y versiones utilizadas en este análisis
+han sido los siguientes:
+
+```{r session_information}
+sessionInfo()
+```

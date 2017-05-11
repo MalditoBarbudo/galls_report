@@ -1,0 +1,82 @@
+---
+title: "README"
+author: "Víctor Granda"
+date: "6 de agosto de 2015"
+output: 
+  html_document: 
+    theme: united
+    toc: yes
+---
+
+# README
+
+Información general sobre el ensayo de reguladores del crecimiento en agallas
+de *Pistacea*.
+
+## Planteamiento
+
+La intención es intentar establecer el patron hormonal de la agalla en
+comparación con el hemifoliolo sin agalla. Partimos de datos de contenido en
+reguladores de 5 pooles (réplicas biológicas), con 3 pinchazos cada uno
+(réplicas analíticas), para cada estado (sin agalla, con agalla).
+
+## Datos
+
+Los datos brutos, tal cual los he recibido se encuentran en la carpeta
+`Raw_Data`.
+
+### Modificaciones pre-analisis
+
+Los datos brutos han sufrido las siguientes modificaciones previas al análisis:
+
+  1. Elimino todos los formatos y colores (No son necesarios y pueden llevar
+     a modificaciones "silenciosas" o "invisibles" de los datos a la hora
+     de importarlos a R).
+  
+  2. Transformo los nombres de los reguladores a sus acrónimos comunes, es más
+     fácil así trabajar con los datos. También cambio el nombre de determinadas
+     variables para evitar carácteres incompatibles con R.
+  
+  3. Me quedo solo con la hoja de datos, sin las gráficas no la hoja con el
+     código de muestras, ya que no son necesarios para el análisis. También
+     elimino las columnas correspondientes al Name, Área, el RT y el S/N ratio.
+     Son descriptivas de la eficacia del masas, pero no nos sirven para el
+     análisis.
+  
+  4. Elimino los datos dudosos, van a alterar el análisis mucho, ya que
+     aumentan la variabilidad presente en las muestras mucho y no nos van a
+     ofrecer información fiable. Eso supone que algunos reguladores
+     desaparezcan del análisis, como la GA3.
+  
+  5. Elimino el prima de la codificación de la muestra. Se mantiene en los
+     datos brutos, pero durante el análisis no es necesario. Recordar, no
+     obstante, que las muestras con prima indican una segunda extracción debido
+     a problemas en la primera extracción.
+  
+  6. Modifico el identificador de la muestra, para usar la clave proporcionada,
+     ya que así es más facil después agrupar las muestras en función de si
+     es agalla o foliolo, así como poder identificar aquellas que son del
+     mismo árbol, dado que estas muestras no sería independientes y deberemos
+     tener en cuenta el efecto aleatorio del árbol.
+  
+  7. Creo un *data dictionary*, de tipo `csv` (`data_dictionary.csv`), con
+     los códigos de las muestras, así como los nombres completos de las
+     variables, y todo lo necesario para obtener bien los ejes de las gráficas
+     y las tablas.
+  
+  8. Elimino los espacios del nombre del archivo y lo guardo como `csv`, ya que
+     en este formato se puede abrir con excel o con un editor de texto en
+     cualquier sistema, independientemente del sistema operativo.
+
+Los datos transformados se encuentran en la carpeta `Data`, en el archivo
+`pgrs_foliolos_vs_agallas.csv`, mientras que la codificación se encuentra en
+la misma carpeta con el nombre `data_dictionary.csv`.
+
+### Modificaciones durante el análisis
+
+Las modificaciones de los datos realizadas durante el análisis se encuentran
+detalladas en el report.
+
+## Analysis Report
+
+El informe del análisis se encuentra [aquí](20150805_galls_pgrs_Antonio_Report.Rmd)
