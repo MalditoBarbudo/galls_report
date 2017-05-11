@@ -6,7 +6,6 @@ output:
   html_document: 
     theme: readable
     toc: yes
-runtime: shiny
 ---
 
 # Carga de datos
@@ -26,7 +25,8 @@ library(DT) # para mostrar las tablas de datos
 library(d3heatmap) # heatmap
 library(viridis) # colores para daltónicos
 library(extrafont) # fuentes extras para las gráficas
-library(shiny) # para el widget del t test
+library(purrr) # para el t.test simultaneo
+library(broom) # para crear los df con los resultados de los t.test
 # Load fonts
 loadfonts()
 
@@ -389,86 +389,53 @@ comparásemos las medias de cada grupo sin tenerlo en cuenta. La solución más
 sencilla es realizar un contraste de medias mediante un *t test*, pero
 considerando cada par de muestras `agalla` y `testigo` del mismo árbol como
 emparejadas.  
-Con el fin de simplificar el informe, así como facilitar la visualización de
-cada test, creo un framework interactivo, donde se puede seleccionar la
-hormona a analizar y el resultado a visualizar (cantidad o concentración):
+Las siguientes tablas muestran los resultados de los *t test* para cada
+hormona, primero con los datos de cantidad:
+
+```{r paired_t_test_2, echo = FALSE}
+# Cantidad
+data_pgrs_cantidad_or %>%
+  select(ABA:Z) %>%
+  map(~t.test(. ~ data_pgrs_cantidad_or$ID, paired = TRUE)) %>%
+  map(tidy) %>%
+  bind_rows() %>%
+  mutate_if(is.numeric, funs(round(., 3))) %>%
+  mutate(Hormona = names(data_pgrs_cantidad_or[,-c(1,2)])) %>%
+  rename(df = parameter,
+         t = statistic) %>%
+  select(Hormona, everything(), -method, -alternative) %>%
+  datatable(style = 'bootstrap', rownames = FALSE,
+            options = list(columnDefs = list(list(className = 'dt-center', targets = 0:6)),
+            dom = 't',
+            initComplete = JS(
+              "function(settings, json) {",
+              "$(this.api().table().header()).css({'background-color': '#000', 'color': '#fff'});",
+              "}"),
+            pageLength = 12))
+```
+
+Y con los de concentración:
 
 ```{r paired_t_test, echo = FALSE}
-# salvamos los datos para cargarlos dentro de la funcion de shiny
-save(list = c('data_pgrs_conc_or', 'data_pgrs_cantidad_or'),
-     file = 't_test_data.Rdata')
-
-# galls_paired_t_test()
-shinyApp(
-    
-    
-    ui = fluidPage(
-      fluidRow(
-        style = "padding-bottom: 20px;",
-        column(4, selectInput('hormonas', label = 'Hormona a visualizar',
-                              choices = list("ABA" = "ABA", "BA" = "BA",
-                                             "BK" = "BK", "DHZ" = "DHZ",
-                                             "GA9" = "GA9", "IAA" = "IAA",
-                                             "iP" = "IP", "iPA" = "IPA",
-                                             "JA" = "JA", "RDHZ" = "RDHZ",
-                                             "SA" = "SA", "Z" = "Z"),
-                              selected = 'ABA')),
-        column(4, selectInput('dataset', label = 'Datos',
-                              choices = list("Cantidad (ng/g Pf)" = 'data_pgrs_cantidad_or',
-                                             "Concentración (ng/mL)" = 'data_pgrs_conc_or'),
-                              selected = "data_pgrs_cantidad_or"))
-      ),
-      fluidRow(
-        verbatimTextOutput('t_test')
-      ),
-      fluidRow(
-        plotOutput('boxplot', height = '250px', width = '400px')
-      )
-    ),
-    
-    server = function(input, output, session){
-      load('t_test_data.Rdata')
-      dataset <- reactive({
-        switch(input$dataset,
-               'data_pgrs_cantidad_or' = data_pgrs_cantidad_or,
-               'data_pgrs_conc_or' = data_pgrs_conc_or) %>%
-          select_(input$hormonas, 'ID') %>%
-          rename_(hormona = input$hormonas) %>%
-          mutate_(ID = quote(as.factor(ID)))
-        })
-      output$t_test <- renderPrint({
-        t.test(hormona~ID, data = dataset(),
-               paired = TRUE)
-      })
-      
-      output$boxplot <- renderPlot({
-        dataset() %>%
-          ggplot(aes(x = ID, y = hormona, fill = ID)) +
-          geom_boxplot(outlier.size = 0) +
-          geom_point(aes(colour = ID),
-                     position = position_jitter(width = .25, height = 0),
-                     shape = 19, size = 2) +
-          labs(x = '', y = 'Regulador') +
-          scale_fill_manual(values = c('#EF4836', '#446CB3')) +
-          scale_colour_manual(values = c('#96281B', '#1F3A93')) +
-          theme_bw() +
-          theme(axis.ticks.x = element_line(size = 1, colour = 'black'),
-                axis.line = element_line(size = 1, colour = "black"),
-                axis.line.y = element_blank(),
-                axis.ticks.y = element_blank(),
-                panel.border = element_blank(),
-                panel.grid.minor = element_blank(),
-                panel.grid.major.y = element_line(size = .5, colour = 'grey80',
-                                                  linetype = 'dotted'),
-                panel.grid.major.x = element_blank(),
-                panel.background = element_rect(fill = 'grey95'),
-                legend.background = element_blank(),
-                legend.key = element_blank(),
-                text = element_text(family = "Raleway", size = 12))
-      })
-    },
-    options = list(height = 600)
-  )
+# concentracion
+data_pgrs_conc_or %>%
+  select(ABA:Z) %>%
+  map(~t.test(. ~ data_pgrs_conc_or$ID, paired = TRUE)) %>%
+  map(tidy) %>%
+  bind_rows() %>%
+  mutate_if(is.numeric, funs(round(., 3))) %>%
+  mutate(Hormona = names(data_pgrs_conc_or[,-c(1,2)])) %>%
+  rename(df = parameter,
+         t = statistic) %>%
+  select(Hormona, everything()) %>%
+  datatable(style = 'bootstrap', rownames = FALSE,
+            options = list(columnDefs = list(list(className = 'dt-center', targets = 0:6)),
+            dom = 't',
+            initComplete = JS(
+              "function(settings, json) {",
+              "$(this.api().table().header()).css({'background-color': '#000', 'color': '#fff'});",
+              "}"),
+            pageLength = 12))
 ```
 
 Los resultados de los tests se resumen en la siguiente tabla:
