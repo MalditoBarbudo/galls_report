@@ -1,5 +1,5 @@
 ---
-title: "20150805_galls_pgrs_Antonio_Report"
+title: "Galls report"
 author: "Víctor Granda"
 date: "6 de agosto de 2015"
 output: 
